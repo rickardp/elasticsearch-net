@@ -24,10 +24,10 @@
 
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Reflection;
 using System.Threading.Tasks;
 using Elasticsearch.Net.Utf8Json.Formatters;
 using Elasticsearch.Net.Utf8Json.Internal;
@@ -38,30 +38,23 @@ namespace Elasticsearch.Net.Utf8Json.Resolvers
 	{
 		public static readonly IJsonFormatterResolver Instance = new DynamicGenericResolver();
 
-		DynamicGenericResolver()
+		private DynamicGenericResolver()
 		{
-
 		}
 
-		public IJsonFormatter<T> GetFormatter<T>()
-		{
-			return FormatterCache<T>.formatter;
-		}
+		public IJsonFormatter<T> GetFormatter<T>() => FormatterCache<T>.formatter;
 
-		static class FormatterCache<T>
+		private static class FormatterCache<T>
 		{
 			public static readonly IJsonFormatter<T> formatter;
 
-			static FormatterCache()
-			{
-				formatter = (IJsonFormatter<T>)DynamicGenericResolverGetFormatterHelper.GetFormatter(typeof(T));
-			}
+			static FormatterCache() => formatter = (IJsonFormatter<T>)DynamicGenericResolverGetFormatterHelper.GetFormatter(typeof(T));
 		}
 	}
 
 	internal static class DynamicGenericResolverGetFormatterHelper
 	{
-		static readonly Dictionary<Type, Type> formatterMap = new Dictionary<Type, Type>()
+		private static readonly Dictionary<Type, Type> FormatterMap = new Dictionary<Type, Type>()
 		{
 			{typeof(List<>), typeof(ListFormatter<>)},
 			{typeof(LinkedList<>), typeof(LinkedListFormatter<>)},
@@ -83,12 +76,12 @@ namespace Elasticsearch.Net.Utf8Json.Resolvers
 			{typeof(IReadOnlyList<>), typeof(InterfaceReadOnlyListFormatter<>)},
 			{typeof(IReadOnlyCollection<>), typeof(InterfaceReadOnlyCollectionFormatter<>)},
 			{typeof(ISet<>), typeof(InterfaceSetFormatter<>)},
-			{typeof(System.Collections.Concurrent.ConcurrentBag<>), typeof(ConcurrentBagFormatter<>)},
-			{typeof(System.Collections.Concurrent.ConcurrentQueue<>), typeof(ConcurrentQueueFormatter<>)},
-			{typeof(System.Collections.Concurrent.ConcurrentStack<>), typeof(ConcurrentStackFormatter<>)},
+			{typeof(ConcurrentBag<>), typeof(ConcurrentBagFormatter<>)},
+			{typeof(ConcurrentQueue<>), typeof(ConcurrentQueueFormatter<>)},
+			{typeof(ConcurrentStack<>), typeof(ConcurrentStackFormatter<>)},
 			{typeof(ReadOnlyDictionary<,>), typeof(ReadOnlyDictionaryFormatter<,>)},
 			{typeof(IReadOnlyDictionary<,>), typeof(InterfaceReadOnlyDictionaryFormatter<,>)},
-			{typeof(System.Collections.Concurrent.ConcurrentDictionary<,>), typeof(ConcurrentDictionaryFormatter<,>)},
+			{typeof(ConcurrentDictionary<,>), typeof(ConcurrentDictionaryFormatter<,>)},
 			{typeof(Lazy<>), typeof(LazyFormatter<>)},
 			{typeof(Task<>), typeof(TaskValueFormatter<>)},
 		};
@@ -96,70 +89,53 @@ namespace Elasticsearch.Net.Utf8Json.Resolvers
 		// Reduce IL2CPP code generate size(don't write long code in <T>)
 		internal static object GetFormatter(Type t)
 		{
-			var ti = t.GetTypeInfo();
-
 			if (t.IsArray)
 			{
 				var rank = t.GetArrayRank();
 				if (rank == 1)
 				{
 					if (t.GetElementType() == typeof(byte)) // byte[] is also supported in builtin formatter.
-					{
 						return ByteArrayFormatter.Default;
-					}
 
 					return Activator.CreateInstance(typeof(ArrayFormatter<>).MakeGenericType(t.GetElementType()));
 				}
-				else if (rank == 2)
-				{
-					return Activator.CreateInstance(typeof(TwoDimentionalArrayFormatter<>).MakeGenericType(t.GetElementType()));
-				}
-				else if (rank == 3)
-				{
-					return Activator.CreateInstance(typeof(ThreeDimentionalArrayFormatter<>).MakeGenericType(t.GetElementType()));
-				}
-				else if (rank == 4)
-				{
-					return Activator.CreateInstance(typeof(FourDimentionalArrayFormatter<>).MakeGenericType(t.GetElementType()));
-				}
-				else
-				{
-					return null; // not supported built-in
-				}
+				if (rank == 2)
+					return Activator.CreateInstance(typeof(TwoDimensionalArrayFormatter<>).MakeGenericType(t.GetElementType()));
+
+				if (rank == 3)
+					return Activator.CreateInstance(typeof(ThreeDimensionalArrayFormatter<>).MakeGenericType(t.GetElementType()));
+
+				if (rank == 4)
+					return Activator.CreateInstance(typeof(FourDimensionalArrayFormatter<>).MakeGenericType(t.GetElementType()));
+
+				return null; // not supported built-in
 			}
-			else if (ti.IsGenericType)
+
+			if (t.IsGenericType)
 			{
-				var genericType = ti.GetGenericTypeDefinition();
-				var genericTypeInfo = genericType.GetTypeInfo();
-				var isNullable = genericTypeInfo.IsNullable();
-				var nullableElementType = isNullable ? ti.GenericTypeArguments[0] : null;
+				var genericType = t.GetGenericTypeDefinition();
+				var isNullable = genericType.IsNullable();
+				var nullableElementType = isNullable ? t.GenericTypeArguments[0] : null;
 
 				if (genericType == typeof(KeyValuePair<,>))
-				{
-					return CreateInstance(typeof(KeyValuePairFormatter<,>), ti.GenericTypeArguments);
-				}
-				else if (isNullable && nullableElementType.GetTypeInfo().IsConstructedGenericType() && nullableElementType.GetGenericTypeDefinition() == typeof(KeyValuePair<,>))
-				{
-					return CreateInstance(typeof(NullableFormatter<>), new[] { nullableElementType });
-				}
+					return CreateInstance(typeof(KeyValuePairFormatter<,>), t.GenericTypeArguments);
 
+				if (isNullable && nullableElementType.IsConstructedGenericType && nullableElementType.GetGenericTypeDefinition() == typeof(KeyValuePair<,>))
+					return CreateInstance(typeof(NullableFormatter<>), new[] { nullableElementType });
 #if NETSTANDARD2_1
 				// ValueTask
-				else if (genericType == typeof(ValueTask<>))
-				{
-					return CreateInstance(typeof(ValueTaskFormatter<>), ti.GenericTypeArguments);
-				}
-				else if (isNullable && nullableElementType.IsConstructedGenericType && nullableElementType.GetGenericTypeDefinition() == typeof(ValueTask<>))
-				{
+				if (genericType == typeof(ValueTask<>))
+					return CreateInstance(typeof(ValueTaskFormatter<>), t.GenericTypeArguments);
+
+				if (isNullable && nullableElementType.IsConstructedGenericType && nullableElementType.GetGenericTypeDefinition() == typeof(ValueTask<>))
 					return CreateInstance(typeof(NullableFormatter<>), new[] { nullableElementType });
-				}
 #endif
 
 				// Tuple
-				else if (ti.FullName.StartsWith("System.Tuple"))
+				if (t.FullName.StartsWith("System.Tuple"))
 				{
 					Type tupleFormatterType = null;
-					switch (ti.GenericTypeArguments.Length)
+					switch (t.GenericTypeArguments.Length)
 					{
 						case 1:
 							tupleFormatterType = typeof(TupleFormatter<>);
@@ -189,15 +165,15 @@ namespace Elasticsearch.Net.Utf8Json.Resolvers
 							break;
 					}
 
-					return CreateInstance(tupleFormatterType, ti.GenericTypeArguments);
+					return CreateInstance(tupleFormatterType, t.GenericTypeArguments);
 				}
 
 #if NETSTANDARD
 				// ValueTuple
-				else if (ti.FullName.StartsWith("System.ValueTuple"))
+				if (t.FullName.StartsWith("System.ValueTuple"))
 				{
 					Type tupleFormatterType = null;
-					switch (ti.GenericTypeArguments.Length)
+					switch (t.GenericTypeArguments.Length)
 					{
 						case 1:
 							tupleFormatterType = typeof(ValueTupleFormatter<>);
@@ -227,12 +203,12 @@ namespace Elasticsearch.Net.Utf8Json.Resolvers
 							break;
 					}
 
-					return CreateInstance(tupleFormatterType, ti.GenericTypeArguments);
+					return CreateInstance(tupleFormatterType, t.GenericTypeArguments);
 				}
 
 				// Nullable ValueTuple
-				else if (isNullable && nullableElementType.GetTypeInfo().IsConstructedGenericType() &&
-					nullableElementType.GetTypeInfo().FullName.StartsWith("System.ValueTuple"))
+				if (isNullable && nullableElementType.IsConstructedGenericType &&
+					nullableElementType.FullName.StartsWith("System.ValueTuple"))
 				{
 					Type tupleFormatterType = null;
 					switch (nullableElementType.GenericTypeArguments.Length)
@@ -270,93 +246,71 @@ namespace Elasticsearch.Net.Utf8Json.Resolvers
 				}
 #endif
 
-				// ArraySegement
-				else if (genericType == typeof(ArraySegment<>))
+				// ArraySegment
+				if (genericType == typeof(ArraySegment<>))
 				{
-					if (ti.GenericTypeArguments[0] == typeof(byte))
-					{
+					if (t.GenericTypeArguments[0] == typeof(byte))
 						return ByteArraySegmentFormatter.Default;
-					}
-					else
-					{
-						return CreateInstance(typeof(ArraySegmentFormatter<>), ti.GenericTypeArguments);
-					}
+
+					return CreateInstance(typeof(ArraySegmentFormatter<>), t.GenericTypeArguments);
 				}
-				else if (isNullable && nullableElementType.GetTypeInfo().IsConstructedGenericType() && nullableElementType.GetGenericTypeDefinition() == typeof(ArraySegment<>))
+
+				if (isNullable && nullableElementType.IsConstructedGenericType && nullableElementType.GetGenericTypeDefinition() == typeof(ArraySegment<>))
 				{
 					if (nullableElementType == typeof(ArraySegment<byte>))
-					{
 						return new StaticNullableFormatter<ArraySegment<byte>>(ByteArraySegmentFormatter.Default);
-					}
-					else
-					{
-						return CreateInstance(typeof(NullableFormatter<>), new[] { nullableElementType });
-					}
+
+					return CreateInstance(typeof(NullableFormatter<>), new[] { nullableElementType });
 				}
 
 				// Mapped formatter
-				else
-				{
-					Type formatterType;
-					if (formatterMap.TryGetValue(genericType, out formatterType))
-					{
-						return CreateInstance(formatterType, ti.GenericTypeArguments);
-					}
+				if (FormatterMap.TryGetValue(genericType, out var formatterType))
+					return CreateInstance(formatterType, t.GenericTypeArguments);
 
-					// generic collection
-					else if (ti.GenericTypeArguments.Length == 1
-						&& ti.ImplementedInterfaces.Any(x => x.GetTypeInfo().IsConstructedGenericType() && x.GetGenericTypeDefinition() == typeof(ICollection<>))
-						&& ti.DeclaredConstructors.Any(x => x.GetParameters().Length == 0))
-					{
-						var elemType = ti.GenericTypeArguments[0];
-						return CreateInstance(typeof(GenericCollectionFormatter<,>), new[] { elemType, t });
-					}
-					// generic dictionary
-					else if (ti.GenericTypeArguments.Length == 2
-						&& ti.ImplementedInterfaces.Any(x => x.GetTypeInfo().IsConstructedGenericType() && x.GetGenericTypeDefinition() == typeof(IDictionary<,>))
-						&& ti.DeclaredConstructors.Any(x => x.GetParameters().Length == 0))
-					{
-						var keyType = ti.GenericTypeArguments[0];
-						var valueType = ti.GenericTypeArguments[1];
-						return CreateInstance(typeof(GenericDictionaryFormatter<,,>), new[] { keyType, valueType, t });
-					}
+				// generic collection
+				if (t.GenericTypeArguments.Length == 1
+					&& t.GetInterfaces().Any(x => x.IsConstructedGenericType && x.GetGenericTypeDefinition() == typeof(ICollection<>))
+					&& t.GetDeclaredConstructors().Any(x => x.GetParameters().Length == 0))
+				{
+					var elemType = t.GenericTypeArguments[0];
+					return CreateInstance(typeof(GenericCollectionFormatter<,>), new[] { elemType, t });
+				}
+				// generic dictionary
+				if (t.GenericTypeArguments.Length == 2
+					&& t.GetInterfaces().Any(x => x.IsConstructedGenericType && x.GetGenericTypeDefinition() == typeof(IDictionary<,>))
+					&& t.GetDeclaredConstructors().Any(x => x.GetParameters().Length == 0))
+				{
+					var keyType = t.GenericTypeArguments[0];
+					var valueType = t.GenericTypeArguments[1];
+					return CreateInstance(typeof(GenericDictionaryFormatter<,,>), new[] { keyType, valueType, t });
 				}
 			}
 			else
 			{
 				// NonGeneric Collection
 				if (t == typeof(IEnumerable))
-				{
 					return NonGenericInterfaceEnumerableFormatter.Default;
-				}
-				else if (t == typeof(ICollection))
-				{
+
+				if (t == typeof(ICollection))
 					return NonGenericInterfaceCollectionFormatter.Default;
-				}
-				else if (t == typeof(IList))
-				{
+
+				if (t == typeof(IList))
 					return NonGenericInterfaceListFormatter.Default;
-				}
-				else if (t == typeof(IDictionary))
-				{
+
+				if (t == typeof(IDictionary))
 					return NonGenericInterfaceDictionaryFormatter.Default;
-				}
-				if (typeof(IList).GetTypeInfo().IsAssignableFrom(ti) && ti.DeclaredConstructors.Any(x => x.GetParameters().Length == 0))
-				{
+
+				if (typeof(IList).IsAssignableFrom(t) && t.GetDeclaredConstructors().Any(x => x.GetParameters().Length == 0))
 					return Activator.CreateInstance(typeof(NonGenericListFormatter<>).MakeGenericType(t));
-				}
-				else if (typeof(IDictionary).GetTypeInfo().IsAssignableFrom(ti) && ti.DeclaredConstructors.Any(x => x.GetParameters().Length == 0))
-				{
+
+				if (typeof(IDictionary).IsAssignableFrom(t) && t.GetDeclaredConstructors().Any(x => x.GetParameters().Length == 0))
 					return Activator.CreateInstance(typeof(NonGenericDictionaryFormatter<>).MakeGenericType(t));
-				}
 			}
 
 			return null;
 		}
 
-		static object CreateInstance(Type genericType, Type[] genericTypeArguments, params object[] arguments)
-		{
-			return Activator.CreateInstance(genericType.MakeGenericType(genericTypeArguments), arguments);
-		}
+		private static object CreateInstance(Type genericType, Type[] genericTypeArguments, params object[] arguments) =>
+			Activator.CreateInstance(genericType.MakeGenericType(genericTypeArguments), arguments);
 	}
 }

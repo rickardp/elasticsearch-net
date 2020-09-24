@@ -14,10 +14,7 @@ let SkipList = dict<SkipFile,SkipSection> [
     SkipFile "ml/explain_data_frame_analytics.yml", Section "Test neither job id nor body"
     
     // funny looking dispatch /_security/privilege/app?name
-    SkipFile "privileges/10_basic.yml", Sections [
-        "Test put and delete privileges"
-        "Test put and get privileges"
-    ]
+    SkipFile "privileges/10_basic.yml", All
     
     // 7.x only
     // We skip the generation of this API till one of the later minors
@@ -172,6 +169,9 @@ let SkipList = dict<SkipFile,SkipSection> [
     
     //new API TODO remove when we regenerate
     SkipFile "cluster.voting_config_exclusions/10_basic.yml", All
+    
+    //TODO has dates without strings which trips up our yaml parser
+    SkipFile "runtime_fields/40_date.yml", All
 
 ]
 
